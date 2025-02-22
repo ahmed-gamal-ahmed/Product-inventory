@@ -141,13 +141,6 @@
           class="d-flex flex-wrap justify-content-center gap-2"
         ></div>
       </div>
-      <!-- New Section: Toggle Action Column -->
-      <div class="mb-3">
-        <h4 class="text-center">Toggle Action Column</h4>
-        <button id="toggleActionColumnButton" class="btn btn-secondary">
-          Hide Action Column
-        </button>
-      </div>
     </div>
 
     <!-- Open Sidebar Button -->
@@ -293,74 +286,7 @@
 
         // Load previous progress if available
         loadProgress();
-
-        // Toggle Action Column Button
-        document
-          .getElementById("toggleActionColumnButton")
-          .addEventListener("click", toggleActionColumn);
-
-        // Load the toggle state from local storage
-        const isActionColumnHidden =
-          localStorage.getItem("isActionColumnHidden") === "true";
-        const toggleActionColumnButton = document.getElementById(
-          "toggleActionColumnButton"
-        );
-        toggleActionColumnButton.textContent = isActionColumnHidden
-          ? "Show Action Column"
-          : "Hide Action Column";
-
-        // Apply the saved state on page load
-        if (isActionColumnHidden) {
-          toggleActionColumn();
-        }
       });
-
-      function toggleActionColumn() {
-        const tables = [
-          document.getElementById("productTableBody"),
-          document.getElementById("remainingTableBody"),
-        ];
-        const headers = [
-          document.getElementById("tableHeaders"),
-          document.getElementById("remainingTableHeaders"),
-        ];
-
-        let isHidden = false;
-
-        // Check if the last column is already hidden
-        if (
-          tables[0].rows.length > 0 &&
-          tables[0].rows[0].lastElementChild.classList.contains("d-none")
-        ) {
-          isHidden = true;
-        }
-
-        // Toggle visibility of the last column in both tables
-        tables.forEach((table) => {
-          Array.from(table.rows).forEach((row) => {
-            if (row.lastElementChild) {
-              row.lastElementChild.classList.toggle("d-none", !isHidden);
-            }
-          });
-        });
-
-        // Toggle visibility of the last header in both tables
-        headers.forEach((headerRow) => {
-          if (headerRow.lastElementChild) {
-            headerRow.lastElementChild.classList.toggle("d-none", !isHidden);
-          }
-        });
-
-        const toggleActionColumnButton = document.getElementById(
-          "toggleActionColumnButton"
-        );
-        toggleActionColumnButton.textContent = isHidden
-          ? "Hide Action Column"
-          : "Show Action Column";
-
-        // Save the toggle state to local storage
-        localStorage.setItem("isActionColumnHidden", !isHidden);
-      }
 
       function handleFileUpload(event) {
         const file = event.target.files[0];
@@ -421,13 +347,9 @@
           columnToggleButtons.appendChild(button);
         });
 
-        const thAction = document.createElement("th");
-        thAction.textContent = "Action";
-        tableHeaders.appendChild(thAction);
-
-        const thActionRemaining = document.createElement("th");
-        thActionRemaining.textContent = "Action";
-        remainingTableHeaders.appendChild(thActionRemaining);
+        // Apply hidden columns to headers
+        applyHiddenColumns(tableHeaders);
+        applyHiddenColumns(remainingTableHeaders);
       }
 
       function toggleColumnVisibility(columnIndex) {
@@ -454,7 +376,7 @@
           }
         });
 
-        // Update the hidden columns array
+        // Update the hidden columns array and save to local storage
         if (hiddenColumns.includes(columnIndex)) {
           hiddenColumns = hiddenColumns.filter(
             (index) => index !== columnIndex
@@ -462,6 +384,7 @@
         } else {
           hiddenColumns.push(columnIndex);
         }
+        localStorage.setItem("hiddenColumns", JSON.stringify(hiddenColumns));
       }
 
       function applyHiddenColumns(row) {
@@ -520,7 +443,8 @@
         event.target.value = ""; // Clear the input field
       }
 
-      function addRowToScannedTable(row, barcode) {
+      // Updated addRowToScannedTable to accept an optional isLoading flag
+      function addRowToScannedTable(row, barcode, isLoading = false) {
         const tableBody = document.getElementById("productTableBody");
         const tr = document.createElement("tr");
 
@@ -535,29 +459,12 @@
           tr.appendChild(td);
         });
 
-        const tdAction = document.createElement("td");
-        const returnButton = document.createElement("button");
-        returnButton.textContent = "Return";
-        returnButton.className = "btn btn-danger btn-sm";
-
-        returnButton.addEventListener("click", () => {
-          const confirmation = confirm(
-            "Are you sure you want to return this product?"
-          );
-          if (confirmation) {
-            moveToRemainingTable(tr, row, barcode);
-          }
-        });
-
-        tdAction.appendChild(returnButton);
-        tr.appendChild(tdAction);
-
         // Apply hidden columns to the new row
         applyHiddenColumns(tr);
 
         tableBody.appendChild(tr);
 
-        if (focusEnabled) {
+        if (focusEnabled && !isLoading) {
           tr.scrollIntoView({ behavior: "smooth", block: "center" });
           tr.classList.add("bg-success");
           setTimeout(() => {
@@ -567,7 +474,9 @@
 
         scannedBarcodes.set(barcode, tr);
 
-        saveProgress();
+        if (!isLoading) {
+          saveProgress();
+        }
       }
 
       function moveToRemainingTable(row, dataRow, barcode) {
@@ -613,19 +522,6 @@
             tr.appendChild(td);
           });
 
-          const tdAction = document.createElement("td");
-          const moveToScannedButton = document.createElement("button");
-          moveToScannedButton.textContent = "Move";
-          moveToScannedButton.className = "btn btn-success btn-sm";
-          moveToScannedButton.addEventListener("click", () => {
-            addRowToScannedTable(row, row[0]);
-            const index = remainingProducts.indexOf(row);
-            remainingProducts.splice(index, 1);
-            showRemainingProducts();
-          });
-          tdAction.appendChild(moveToScannedButton);
-          tr.appendChild(tdAction);
-
           // Apply hidden columns to the new row
           applyHiddenColumns(tr);
 
@@ -637,10 +533,8 @@
         const scannedRows = [...scannedBarcodes.entries()].map(
           ([barcode, row]) => {
             const rowData = [];
-            row.querySelectorAll("td").forEach((cell, index) => {
-              if (index < row.children.length - 1) {
-                rowData.push(cell.textContent);
-              }
+            row.querySelectorAll("td").forEach((cell) => {
+              rowData.push(cell.textContent);
             });
             return { barcode, data: rowData };
           }
@@ -653,6 +547,7 @@
         );
       }
 
+      // Updated loadProgress to correctly load and render scanned product data
       function loadProgress() {
         // Load excelData from local storage
         const savedExcelData = JSON.parse(localStorage.getItem("excelData")) || [];
@@ -665,21 +560,16 @@
         const savedScannedProducts =
           JSON.parse(localStorage.getItem("scannedProducts")) || [];
 
-        // Restore scanned products
+        // Restore scanned products without re-saving progress
         savedScannedProducts.forEach(({ barcode, data }) => {
-          addRowToScannedTable(data, barcode);
+          addRowToScannedTable(data, barcode, true);
 
           // Remove the scanned product from remainingProducts
           const rowIndex = remainingProducts.findIndex((row) =>
             row.some((cell) =>
-              cell
-                .toString()
-                .split("-")
-                .map((c) => c.trim())
-                .includes(barcode)
+              cell.toString().split("-").map((c) => c.trim()).includes(barcode)
             )
           );
-
           if (rowIndex >= 0) {
             remainingProducts.splice(rowIndex, 1); // Remove the product from remainingProducts
           }
@@ -687,6 +577,13 @@
 
         // Restore remaining products
         showRemainingProducts(); // Render the remaining products table
+
+        // Load hidden columns state from local storage
+        hiddenColumns = JSON.parse(localStorage.getItem("hiddenColumns")) || [];
+        applyHiddenColumns(document.getElementById("tableHeaders"));
+        applyHiddenColumns(document.getElementById("remainingTableHeaders"));
+        document.querySelectorAll("#productTableBody tr").forEach(applyHiddenColumns);
+        document.querySelectorAll("#remainingTableBody tr").forEach(applyHiddenColumns);
       }
 
       function clearLocalStorage() {
