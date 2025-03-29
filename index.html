@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Product Table by Barcode</title>
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#28a745">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="apple-touch-icon" href="./icons/logo-192.png">
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css"
@@ -166,7 +172,6 @@
           <i class="bi bi-upload"></i> File Upload
         </button>
         <div class="collapse show" id="fileUploadSection">
-          <!-- ...existing file upload code... -->
           <div class="mt-2">
             <label for="fileInput" class="form-label">Upload Excel File</label>
             <input type="file" id="fileInput" class="form-control" />
@@ -303,6 +308,29 @@
           <i class="bi bi-file-earmark-spreadsheet"></i> Export Products
         </button>
       </div>
+      
+      <!-- Add new export/import local storage buttons -->
+      <div class="mb-3">
+        <button
+          id="exportStorageButton"
+          class="btn btn-info w-100"
+          data-bs-toggle="tooltip"
+          title="Export Local Storage Data"
+        >
+          <i class="bi bi-download"></i> Export Storage
+        </button>
+      </div>
+      <div class="mb-3">
+        <button
+          id="importStorageButton"
+          class="btn btn-warning w-100"
+          data-bs-toggle="tooltip"
+          title="Import Local Storage Data"
+        >
+          <i class="bi bi-upload"></i> Import Storage
+        </button>
+        <input type="file" id="importStorageInput" hidden accept=".json" />
+      </div>
     </div>
 
     <!-- Open Sidebar Button -->
@@ -342,6 +370,16 @@
     <!-- Bootstrap Bundle for collapse & tooltip -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+      // Add PWA service worker registration at the beginning of your script
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("./service-worker.js")
+            .then(() => console.log("Service Worker registered successfully"))
+            .catch((err) => console.error("Service Worker registration failed:", err));
+        });
+      }
+      
       let excelData = [];
       const scannedBarcodes = new Map();
       let remainingProducts = [];
@@ -433,6 +471,55 @@
             }
           });
 
+        // Add keyboard navigation to jump to products in the remaining table by first letter
+        document.addEventListener("keydown", (event) => {
+          // Don't intercept keys when typing in input fields
+          if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+            return;
+          }
+          
+          // Check if the remaining table is visible
+          const remainingSection = document.getElementById("remainingProductsSection");
+          if (remainingSection.classList.contains("d-none")) return;
+      
+          const key = event.key.toUpperCase();
+          if (key.length === 1 && key.match(/[A-Z]/i)) {
+            const rows = document.getElementById("remainingTableBody").rows;
+            
+            for (let i = 0; i < rows.length; i++) {
+              // Check if the cell exists and is not hidden
+              if (rows[i].cells.length <= 2 || rows[i].cells[2].classList.contains('d-none')) {
+                continue;
+              }
+              
+              const descriptionCell = rows[i].cells[2]; // Assuming description is in 3rd column (index 2)
+              if (!descriptionCell.textContent) continue;
+              
+              const firstLetter = descriptionCell.textContent.trim().charAt(0).toUpperCase();
+              
+              if (firstLetter === key) {
+                rows[i].scrollIntoView({
+                  behavior: "smooth",
+                  block: "center"
+                });
+                
+                // Add highlight effect
+                const originalBackground = rows[i].style.backgroundColor;
+                rows[i].classList.add("bg-info");
+                
+                setTimeout(() => {
+                  rows[i].classList.remove("bg-info");
+                  rows[i].style.backgroundColor = originalBackground;
+                }, 1500);
+                
+                // Provide visual feedback in console
+                console.log(`Found product: ${descriptionCell.textContent}`);
+                break;
+              }
+            }
+          }
+        });
+
         // Close/open the sidebar using the ESC key
         document.addEventListener("keydown", (event) => {
           if (event.key === "Escape") {
@@ -442,6 +529,13 @@
             body.classList.toggle("sidebar-open");
           }
         });
+
+        // Add event listeners for export/import storage functionality
+        document.getElementById('exportStorageButton').addEventListener('click', exportLocalStorage);
+        document.getElementById('importStorageButton').addEventListener('click', () => {
+          document.getElementById('importStorageInput').click();
+        });
+        document.getElementById('importStorageInput').addEventListener('change', importLocalStorage);
 
         // Load edited barcodes
         loadEditedBarcodes();
@@ -782,15 +876,35 @@
 
       function clearLocalStorage() {
         const confirmation = confirm(
-          "Are you sure you want to clear all scanned and remaining products?"
+          "Are you sure you want to clear all data including scanned products, remaining products, and uploaded excel data?"
         );
         if (confirmation) {
-          // Clear only the scanned and remaining products
+          // Clear all relevant data
           localStorage.removeItem("scannedProducts");
           localStorage.removeItem("remainingProducts");
-
-          // Reload the page to reset the tables
-          location.reload();
+          localStorage.removeItem("excelData"); // Also remove the Excel data to reset the remaining table
+          
+          // Reset the page header
+          document.getElementById("pageHeader").textContent = "Product Inventory";
+          
+          // Reset in-memory data
+          excelData = [];
+          scannedBarcodes.clear();
+          remainingProducts = [];
+          fileName = "Product Inventory";
+          
+          // Clear tables
+          document.getElementById("productTableBody").innerHTML = "";
+          document.getElementById("remainingTableBody").innerHTML = "";
+          document.getElementById("tableHeaders").innerHTML = "";
+          document.getElementById("remainingTableHeaders").innerHTML = "";
+          document.getElementById("columnToggleButtons").innerHTML = "";
+          
+          // Hide remaining products section
+          document.getElementById("remainingProductsSection").classList.add("d-none");
+          document.getElementById("toggleRemainingButton").textContent = "Remaining Products";
+          
+          alert("All data has been cleared successfully!");
         }
       }
 
@@ -831,6 +945,74 @@
 
         // Export the Excel file with the same name as the uploaded file
         XLSX.writeFile(wb, fileName || "Product_Inventory.xlsx");
+      }
+
+      // Export local storage functionality
+      function exportLocalStorage() {
+        // Collect all relevant data from localStorage
+        const storageData = {
+          scannedProducts: localStorage.getItem('scannedProducts'),
+          remainingProducts: localStorage.getItem('remainingProducts'),
+          excelData: localStorage.getItem('excelData'),
+          editedBarcodes: localStorage.getItem('editedBarcodes'),
+          actionColumnVisible: localStorage.getItem('actionColumnVisible'),
+          hiddenColumns: JSON.stringify(hiddenColumns)
+        };
+
+        // Create a Blob and download it
+        const blob = new Blob([JSON.stringify(storageData)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `inventory_backup_${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      // Import local storage functionality
+      function importLocalStorage(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const storageData = JSON.parse(e.target.result);
+            
+            // Validate the imported data
+            const validKeys = [
+              'scannedProducts', 'remainingProducts', 'excelData',
+              'editedBarcodes', 'actionColumnVisible', 'hiddenColumns'
+            ];
+            
+            Object.keys(storageData).forEach(key => {
+              if (validKeys.includes(key) && storageData[key] !== null) {
+                localStorage.setItem(key, storageData[key]);
+              }
+            });
+
+            // Also update hiddenColumns in memory if present
+            if (storageData.hiddenColumns) {
+              try {
+                hiddenColumns = JSON.parse(storageData.hiddenColumns);
+              } catch (e) {
+                console.error("Error parsing hiddenColumns:", e);
+              }
+            }
+
+            alert('Local storage imported successfully! The page will reload.');
+            setTimeout(() => location.reload(), 1000);
+          } catch (error) {
+            alert('Error importing storage data: Invalid file format');
+            console.error('Import error:', error);
+          }
+        };
+        reader.readAsText(file);
+        
+        // Reset the file input so the same file can be selected again if needed
+        event.target.value = '';
       }
 
       // Warn users when they try to refresh or leave the page
